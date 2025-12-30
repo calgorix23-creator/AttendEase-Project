@@ -1,0 +1,7 @@
+{
+  "name": "AttendEase - Smart Attendance",
+  "description": "A robust mobile-first attendance management system for trainers and trainees with offline-ready QR code generation and credit management.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
