@@ -47,3 +47,10 @@ export interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
 }
+
+export interface CreditPackage {
+  id: string;
+  name: string;
+  credits: number;
+  price: number;
+}

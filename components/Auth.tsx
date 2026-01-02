@@ -136,11 +136,13 @@ const Auth: React.FC<AuthProps> = ({ onLogin, onResetPassword }) => {
                   <div className="pt-2 border-t border-slate-100">
                     <div className="space-y-1 mb-2">
                       <label className="text-xs font-bold text-slate-500 uppercase ml-1 tracking-wider">New Password</label>
-                      <input required type="password" underline="none" className="block w-full px-4 py-3 border border-slate-200 rounded-xl outline-none" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+                      {/* Fixed: Removed non-standard 'underline' prop from input */}
+                      <input required type="password" className="block w-full px-4 py-3 border border-slate-200 rounded-xl outline-none" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
                     </div>
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-slate-500 uppercase ml-1 tracking-wider">Confirm New Password</label>
-                      <input required type="password" underline="none" className="block w-full px-4 py-3 border border-slate-200 rounded-xl outline-none" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
+                      {/* Fixed: Removed non-standard 'underline' prop from input */}
+                      <input required type="password" className="block w-full px-4 py-3 border border-slate-200 rounded-xl outline-none" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
                     </div>
                   </div>
                 </div>
