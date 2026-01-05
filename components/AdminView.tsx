@@ -41,8 +41,9 @@ const AdminView: React.FC<AdminViewProps> = ({
   const [editingClass, setEditingClass] = useState<AttendanceClass | null>(null);
   const [editingPackage, setEditingPackage] = useState<CreditPackage | null>(null);
   const [selectedClass, setSelectedClass] = useState<AttendanceClass | null>(null);
-  
+
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
+  const [packageErrorFeedback, setPackageErrorFeedback] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
 
   const [formData, setFormData] = useState({ name: '', email: '', phone: '', role: UserRole.TRAINEE, password: '' });
@@ -69,6 +70,7 @@ const AdminView: React.FC<AdminViewProps> = ({
   useEffect(() => {
     if (editingPackage) setPkgData({ name: editingPackage.name, credits: editingPackage.credits, price: editingPackage.price });
     else if (showPackageModal) setPkgData({ name: '', credits: 10, price: 100 });
+    setPackageErrorFeedback(null);
   }, [editingPackage, showPackageModal]);
 
   const handleUserSubmit = (e: React.FormEvent) => {
@@ -97,6 +99,14 @@ const AdminView: React.FC<AdminViewProps> = ({
 
   const handlePackageSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const isDuplicate = packages.some(p =>
+      p.id !== editingPackage?.id &&
+      p.name.trim().toLowerCase() === pkgData.name.trim().toLowerCase()
+    );
+    if (isDuplicate) {
+      setPackageErrorFeedback("Duplicate Error: Package name already exists.");
+      return;
+    }
     const newPkg = { id: editingPackage?.id || Math.random().toString(36).substr(2, 9), ...pkgData };
     if (editingPackage) onUpdatePackages(packages.map(p => p.id === newPkg.id ? newPkg : p));
     else onUpdatePackages([...packages, newPkg]);
@@ -309,6 +319,7 @@ const AdminView: React.FC<AdminViewProps> = ({
           <div className="bg-white w-full max-w-xs rounded-3xl p-5 shadow-2xl animate-in zoom-in">
             <div className="flex justify-between items-center mb-4"><h3 className="text-sm font-bold">Package Editor</h3><button onClick={() => setShowPackageModal(false)} className="text-slate-300"><X size={20} /></button></div>
             <form onSubmit={handlePackageSubmit} className="space-y-3">
+              {packageErrorFeedback && <div className="p-2 bg-red-50 text-[7px] text-red-600 font-bold uppercase rounded-lg border border-red-100">{packageErrorFeedback}</div>}
               <div className="space-y-0.5"><label className="text-[8px] font-bold uppercase text-slate-400 ml-1">Title</label><input required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg outline-none text-xs font-medium" value={pkgData.name} onChange={e => setPkgData({...pkgData, name: e.target.value})} /></div>
               <div className="space-y-0.5"><label className="text-[8px] font-bold uppercase text-slate-400 ml-1">Credits</label><input type="number" required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg outline-none text-xs font-medium" value={pkgData.credits} onChange={e => setPkgData({...pkgData, credits: parseInt(e.target.value)})} /></div>
               <div className="space-y-0.5"><label className="text-[8px] font-bold uppercase text-slate-400 ml-1">Price (SGD)</label><input type="number" required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg outline-none text-xs font-medium" value={pkgData.price} onChange={e => setPkgData({...pkgData, price: parseInt(e.target.value)})} /></div>

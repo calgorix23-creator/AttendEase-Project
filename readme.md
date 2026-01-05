@@ -23,7 +23,10 @@ AttendEase is a high-fidelity, mobile-first Progressive Web App (PWA) for fitnes
 
 ### 4. Identity & Data Integrity
 - **Email Guard**: Modifying the email field in any profile triggers an inline warning. Email serves as the unique login identifier.
-- **Duplicate Rules**: Prevents sessions with the same Name+Date+Time and prevents trainees from booking overlapping sessions.
+- **Duplicate Rules**:
+  - **Sessions**: Prevents sessions with the same Name+Date+Time. Displays inline error message if duplicate is detected.
+  - **Packages**: Prevents credit packages with duplicate names (case-insensitive, whitespace-trimmed). Displays inline error message during creation or editing.
+  - **Bookings**: Prevents trainees from booking overlapping sessions at the same Date+Time.
 
 ### 5. Staff Intelligence
 - **Staff Override**: Trainers and Admins can remove attendance at any time regardless of the 30-minute rule (for administrative corrections).
