@@ -1,51 +1,34 @@
 # AttendEase - Technical Documentation
 
-AttendEase is a high-fidelity, mobile-first Progressive Web App (PWA) designed for fitness studios and training centers. It handles the complete lifecycle of session scheduling, attendance tracking via QR codes, and a credit-based payment economy.
+AttendEase is a high-fidelity, mobile-first Progressive Web App (PWA) for fitness studios.
 
 ## 🔑 Key Business Logics
 
-### 1. Attendance Conflict Detection
-To prevent "ghost checking" or double-booking, the system implements a strict time-overlap check.
-- **Logic**: When a trainee attempts to check into a class, the system queries the `attendance` ledger for that `traineeId` on the same `date`. 
-- **Validation**: If a record exists for a class at the exact same `time`, the check-in is rejected with an `Attendance Conflict` warning.
+### 1. Credit Economy & Attendance
+- **Deduction**: 1 Credit is deducted upon booking (Trainee-initiated) or when a Trainer/Admin marks a Trainee as "Present".
+- **Refund**: 1 Credit is refunded only if a cancellation (by Trainee) or an "Absent" toggle (by Staff) occurs **>30 minutes** before the session start time.
+- **Credit Adjustment**: Admins can manually add or subtract credits for Trainees via the User list in AdminView.
+- **Purchase**: Trainees buy credits via the Shop. Payments are simulated but result in immediate credit balance updates.
 
-### 2. Credit-Based Economy
-The app operates on a "Prepaid Credit" model.
-- **Deduction**: Every successful attendance (QR or Manual) triggers a `-1` decrement from the user's `credits` balance.
-- **Verification**: If `credits <= 0`, the check-in fails immediately, prompting the user to visit the Shop.
-- **Persistence**: Credit balances are synchronized across all views and saved to persistent storage.
+### 2. Booking & Cancellation (The 30-Minute Rule)
+- **Trainee Removal**: Trainees can cancel any booking via the **SESSIONS** tab or the **ACTIVITY (Logbook)**.
+- **Refund Eligibility**: 
+  - If `(Session Start Time - Cancellation Time) > 30 minutes`: 1 Credit is automatically refunded.
+  - If `(Session Start Time - Cancellation Time) <= 30 minutes`: The booking is "Locked". Trainees cannot cancel. They must contact the studio if they cannot attend.
+- **Booking Window**: Sessions remain available for booking until 30 minutes after they have started (grace period for late arrivals).
 
-### 3. Temporal Check-in Windows (Grace Period)
-Prevents trainees from marking attendance hours or days in advance.
-- **Window**: Check-in opens exactly **15 minutes** before the scheduled `class.time`.
-- **Feedback**: Early attempts display a countdown or the specific time the window opens.
+### 3. Advance Sessions
+- **Visibility**: Trainees see "Today's Sessions" and "Advance Bookings" for future dates.
+- **History**: The Logbook shows all check-ins and upcoming bookings. Upcoming bookings with >30m lead time show a "Cancel" option.
 
-### 4. Staff Synchronicity & Unified Scheduling
-Unlike standard apps where users only see their own data, AttendEase implements a **Global Staff View**.
-- **Visibility**: Both Admins and Trainers see the full list of classes created by any staff member.
-- **Collision Prevention**: A trainer cannot schedule a class that overlaps with an existing session at the same `location` and `time`.
+### 4. Identity & Data Integrity
+- **Email Guard**: Modifying the email field in any profile triggers an inline warning. Email serves as the unique login identifier.
+- **Duplicate Rules**: Prevents sessions with the same Name+Date+Time and prevents trainees from booking overlapping sessions.
 
-## 🛡️ Security Implementation
+### 5. Staff Intelligence
+- **Staff Override**: Trainers and Admins can remove attendance at any time regardless of the 30-minute rule (for administrative corrections).
 
-### QR Secret Rotation
-Instead of static URLs, the QR code encodes a complex JSON object containing:
-- `cid`: The unique Class ID.
-- `sec`: A randomly generated `qrSecret` (e.g., `AE-ADM-XJ92`).
-- `t`: A creation timestamp to prevent replay attacks from old screenshots.
-
-### Identity Recovery
-The `Auth.tsx` component includes a "ShieldCheck" recovery flow.
-- **Logic**: Users can reset passwords by providing a matching Email + Phone Number combination.
-- **Login ID Protection**: Changing a profile email triggers a high-priority warning, as it updates the unique identifier used for authentication.
-
-## 💳 Simulated Payment Gateway
-A Stripe-inspired "Checkout" experience is implemented in `TraineeView.tsx`.
-- **States**: Includes `PENDING`, `PROCESSING` (simulated latency), and `SUCCESS`.
-- **Validation**: Mock regex validation for 16-digit card numbers and 3-digit CVVs.
-
-## 🛠️ Tech Stack Attributes
-- **Framework**: React 19 (Functional Components & Hooks).
-- **Styling**: Tailwind CSS (Utility-first, mobile-responsive).
-- **QR Engine**: `html5-qrcode` (Hardware-accelerated camera access).
-- **Data Viz**: `recharts` (Administrative engagement trends).
-- **Persistence**: `localStorage` with JSON serialization for offline-ready data.
+## 🛠️ Technical Implementation
+- **Mobile-First**: Optimized for 448px width.
+- **UI Compactness**: Low-padding layouts and optimized typography.
+- **Persistence**: All data is persisted in LocalStorage.

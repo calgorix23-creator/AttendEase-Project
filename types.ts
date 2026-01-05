@@ -31,7 +31,8 @@ export interface AttendanceRecord {
   classId: string;
   traineeId: string;
   timestamp: number;
-  method: 'QR' | 'MANUAL';
+  // Fix: Added 'STAFF' and 'SELF' to permitted methods to match component usage and resolve type errors
+  method: 'QR' | 'MANUAL' | 'STAFF' | 'SELF';
 }
 
 export interface PaymentRecord {
@@ -46,6 +47,13 @@ export interface PaymentRecord {
 export interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
+}
+
+export interface AttendancePackage {
+  id: string;
+  name: string;
+  credits: number;
+  price: number;
 }
 
 export interface CreditPackage {

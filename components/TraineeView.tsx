@@ -1,7 +1,6 @@
-
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { AttendanceClass, AttendanceRecord, User, PaymentRecord, CreditPackage } from '../types';
-import { QrCode, History, ShoppingBag, CheckCircle2, X, ChevronRight, CreditCard, DollarSign, Camera, Image as ImageIcon, MapPin, Calendar, Clock, User as UserIcon, Lock, AlertTriangle, Mail, AlertCircle, ShieldCheck, Loader2 } from 'lucide-react';
+import { QrCode, History, ShoppingBag, CheckCircle2, X, CreditCard, Camera, User as UserIcon, Loader2, AlertCircle, Trash2, Eye, EyeOff, Upload, CalendarDays, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 
 interface TraineeViewProps {
@@ -10,12 +9,12 @@ interface TraineeViewProps {
   attendance: AttendanceRecord[];
   payments: PaymentRecord[];
   packages: CreditPackage[];
-  onCheckIn: (rec: AttendanceRecord) => { success: boolean, message: string };
+  onToggleAttendance: (classId: string, traineeId: string, method: 'SELF') => { success: boolean, message: string };
   onPurchase: (payment: PaymentRecord) => void;
   onUpdateUser: (user: User) => void;
 }
 
-const TraineeView: React.FC<TraineeViewProps> = ({ user, classes, attendance, payments, packages, onCheckIn, onPurchase, onUpdateUser }) => {
+const TraineeView: React.FC<TraineeViewProps> = ({ user, classes, attendance, payments, packages, onToggleAttendance, onPurchase, onUpdateUser }) => {
   const [activeTab, setActiveTab] = useState<'scan' | 'history' | 'shop' | 'profile'>('scan');
   const [historySubTab, setHistorySubTab] = useState<'attendance' | 'purchases'>('attendance');
   const [isScanning, setIsScanning] = useState(false);
@@ -23,413 +22,371 @@ const TraineeView: React.FC<TraineeViewProps> = ({ user, classes, attendance, pa
   const [isProcessing, setIsProcessing] = useState(false);
   const [showPurchaseSuccess, setShowPurchaseSuccess] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'error' | 'success' | 'warning', text: string } | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [profileData, setProfileData] = useState({ name: user.name, email: user.email, phone: user.phoneNumber || '', password: user.password || '' });
   
-  const [profileData, setProfileData] = useState({
-    name: user.name,
-    email: user.email,
-    phone: user.phoneNumber || '',
-    password: user.password || ''
-  });
-
-  const [paymentForm, setPaymentForm] = useState({ card: '', expiry: '', cvv: '' });
-
   const qrScannerRef = useRef<Html5Qrcode | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const traineeAttendance = attendance.filter(a => a.traineeId === user.id);
-  const traineePayments = payments.filter(p => p.traineeId === user.id);
+  // Auto-dismiss status messages on tab change
+  useEffect(() => { setStatusMessage(null); }, [activeTab]);
 
+  // Click-away to dismiss alerts
   useEffect(() => {
-    if (statusMessage) {
-      const timer = setTimeout(() => setStatusMessage(null), 6000);
-      return () => clearTimeout(timer);
-    }
+    const handleClickAway = () => { if (statusMessage) setStatusMessage(null); };
+    window.addEventListener('click', handleClickAway);
+    return () => window.removeEventListener('click', handleClickAway);
   }, [statusMessage]);
 
-  const processQrData = async (decodedText: string) => {
-    try {
-      const data = JSON.parse(decodedText);
-      if (data.cid && data.sec) {
-        const res = onCheckIn({
-          id: Math.random().toString(36).substr(2, 9),
-          classId: data.cid,
-          traineeId: user.id,
-          timestamp: Date.now(),
-          method: 'QR'
-        });
-        
-        if (res.success) {
-          await stopScanner();
-          setStatusMessage({ type: 'success', text: res.message });
-          setActiveTab('history');
-          setHistorySubTab('attendance');
-          return true;
-        } else {
-          const isWarning = res.message.toLowerCase().includes("conflict") || res.message.toLowerCase().includes("hasn't started");
-          setStatusMessage({ type: isWarning ? 'warning' : 'error', text: res.message });
-          await stopScanner();
-          return false;
-        }
-      }
-    } catch (e) {
-      setStatusMessage({ type: 'error', text: "Invalid QR format. Please scan a valid session code." });
-      await stopScanner();
-    }
-    return false;
+  // Data Selectors
+  const todayStr = useMemo(() => new Date().toLocaleDateString('en-CA'), []); // YYYY-MM-DD local
+  const traineeAttendance = useMemo(() => attendance.filter(a => a.traineeId === user.id), [attendance, user.id]);
+  const traineePayments = useMemo(() => payments.filter(p => p.traineeId === user.id), [payments, user.id]);
+
+  /**
+   * Refined 30-Minute Rule Cancellation Logic (v3.1 Reference)
+   */
+  const canCancel = (classTime: string, classDate: string) => {
+    const sessionDate = new Date(`${classDate}T${classTime}`);
+    const now = new Date();
+    const diffInMs = sessionDate.getTime() - now.getTime();
+    const diffInMins = diffInMs / (1000 * 60);
+    return diffInMins > 30;
   };
 
-  const stopScanner = async () => {
-    if (qrScannerRef.current) {
-      try { if (qrScannerRef.current.isScanning) await qrScannerRef.current.stop(); } 
-      catch (e) { console.warn(e); } 
-      finally { qrScannerRef.current = null; }
-    }
-    setIsScanning(false);
-  };
+  const handleTraineeCancel = (classId: string) => {
+    const cls = classes.find(c => c.id === classId);
+    if (!cls) return;
 
-  const startScanner = async () => {
-    setStatusMessage(null);
-    setIsScanning(true);
-    setTimeout(async () => {
-      try {
-        const html5QrCode = new Html5Qrcode("reader");
-        qrScannerRef.current = html5QrCode;
-        await html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 }, async (txt) => await processQrData(txt), () => {});
-      } catch (err) {
-        setStatusMessage({ type: 'error', text: "Failed to access camera. Please check permissions." });
-        setIsScanning(false);
+    if (!canCancel(cls.time, cls.date)) {
+      setStatusMessage({ type: 'warning', text: "Cancellation Locked (30m Rule)." });
+      return;
+    }
+
+    if (window.confirm("Confirm cancellation? 1 Credit will be refunded.")) {
+      const res = onToggleAttendance(classId, user.id, 'SELF');
+      if (res.success) {
+        setStatusMessage({ type: 'success', text: "Booking cancelled. Credit refunded." });
+      } else {
+        setStatusMessage({ type: 'error', text: res.message });
       }
-    }, 300);
+    }
   };
 
   const handlePurchase = (e: React.FormEvent) => {
     e.preventDefault();
     if (!showPaymentGateway) return;
     setIsProcessing(true);
-    
-    // Simulate payment processing delay (Stripe/PayPal imitation)
     setTimeout(() => {
-      onPurchase({
+      const payment: PaymentRecord = {
         id: Math.random().toString(36).substr(2, 9),
         traineeId: user.id,
         amount: showPaymentGateway.price,
         credits: showPaymentGateway.credits,
         timestamp: Date.now(),
         status: 'SUCCESS'
-      });
+      };
+      onPurchase(payment);
       setIsProcessing(false);
       setShowPaymentGateway(null);
       setShowPurchaseSuccess(true);
-      setPaymentForm({ card: '', expiry: '', cvv: '' });
-    }, 2000);
+    }, 1500);
   };
 
-  const handleProfileUpdate = (e: React.FormEvent) => {
-    e.preventDefault();
-    onUpdateUser({
-      ...user,
-      name: profileData.name,
-      email: profileData.email,
-      phoneNumber: profileData.phone,
-      password: profileData.password
-    });
-    alert("Profile settings updated!");
+  const processQrData = async (decodedText: string) => {
+    try {
+      const data = JSON.parse(decodedText);
+      if (data.cid) {
+        const res = onToggleAttendance(data.cid, user.id, 'SELF');
+        if (res.success) {
+          await stopScanner();
+          setStatusMessage({ type: 'success', text: "Success! Enjoy your session." });
+          setActiveTab('history');
+          return true;
+        } else {
+          setStatusMessage({ type: 'error', text: res.message });
+          await stopScanner();
+        }
+      }
+    } catch (e) {
+      setStatusMessage({ type: 'error', text: "Invalid QR code format." });
+      await stopScanner();
+    }
+    return false;
   };
 
-  const emailChanged = profileData.email !== user.email;
+  const stopScanner = async () => {
+    if (qrScannerRef.current?.isScanning) await qrScannerRef.current.stop();
+    qrScannerRef.current = null;
+    setIsScanning(false);
+  };
+
+  const startScanner = async () => {
+    setIsScanning(true);
+    setTimeout(async () => {
+      try {
+        const scanner = new Html5Qrcode("reader");
+        qrScannerRef.current = scanner;
+        await scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, processQrData, () => {});
+      } catch (err) {
+        setStatusMessage({ type: 'error', text: "Camera access denied or failed." });
+        setIsScanning(false);
+      }
+    }, 300);
+  };
+
+  // Lists for Sessions Tab
+  const myBookedIds = useMemo(() => new Set(traineeAttendance.map(a => a.classId)), [traineeAttendance]);
+
+  const availableToday = classes.filter(cls => {
+    if (cls.date !== todayStr || myBookedIds.has(cls.id)) return false;
+    const sessionDate = new Date(`${cls.date}T${cls.time}`);
+    const now = new Date();
+    // Show if class hasn't started or started less than 30 mins ago
+    return (sessionDate.getTime() + (30 * 60 * 1000)) > now.getTime();
+  });
+
+  const availableAdvance = classes.filter(cls => {
+    return cls.date > todayStr && !myBookedIds.has(cls.id);
+  }).sort((a, b) => a.date.localeCompare(b.date));
+
+  const currentBookings = traineeAttendance.map(a => ({
+    record: a,
+    cls: classes.find(c => c.id === a.classId)
+  })).filter(item => item.cls && (new Date(`${item.cls.date}T${item.cls.time}`).getTime() + (30 * 60 * 1000) > Date.now()));
 
   return (
-    <div className="space-y-6">
-      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        try {
-          const html5QrCode = new Html5Qrcode("reader-hidden");
-          const decodedText = await html5QrCode.scanFileV2(file, false);
-          await processQrData(decodedText.decodedText);
-          html5QrCode.clear();
-        } catch (err) {
-          setStatusMessage({ type: 'error', text: "Could not find a valid QR code in this image." });
-        }
-      }} />
-      <div id="reader-hidden" className="hidden"></div>
-
-      <div className="flex bg-slate-100 p-1.5 rounded-2xl overflow-x-auto no-scrollbar shadow-inner">
+    <div className="space-y-4">
+      {/* Tab Navigation */}
+      <div className="flex bg-slate-100 p-1 rounded-xl shadow-inner gap-1">
         {[
-          { id: 'scan', icon: QrCode, label: 'CHECK IN' },
-          { id: 'history', icon: History, label: 'RECORDS' },
-          { id: 'shop', icon: ShoppingBag, label: 'BUY CREDITS' },
-          { id: 'profile', icon: UserIcon, label: 'MY PROFILE' },
+          { id: 'scan', icon: QrCode, label: 'SESSIONS' },
+          { id: 'history', icon: History, label: 'ACTIVITY' },
+          { id: 'shop', icon: ShoppingBag, label: 'WALLET' },
+          { id: 'profile', icon: UserIcon, label: 'PROFILE' },
         ].map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex-1 min-w-[75px] py-3 rounded-xl text-[10px] font-black transition-all flex flex-col items-center justify-center gap-1.5 ${activeTab === tab.id ? 'bg-white text-indigo-600 shadow-sm scale-[1.02]' : 'text-slate-500 hover:text-slate-800'}`}>
-            <tab.icon size={18} /> {tab.label}
+          <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex-1 py-2 rounded-lg text-[9px] font-bold transition-all flex flex-col items-center justify-center gap-1 ${activeTab === tab.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>
+            <tab.icon size={14} /> {tab.label}
           </button>
         ))}
       </div>
 
       {activeTab === 'scan' && (
-        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 pb-16">
           {statusMessage && (
-            <div className={`p-4 rounded-2xl border flex gap-3 animate-bounce ${statusMessage.type === 'warning' ? 'bg-amber-50 border-amber-100 text-amber-800' : statusMessage.type === 'error' ? 'bg-red-50 border-red-100 text-red-800' : 'bg-emerald-50 border-emerald-100 text-emerald-800'}`}>
-              {statusMessage.type === 'success' ? <CheckCircle2 size={20} className="shrink-0" /> : <AlertTriangle size={20} className="shrink-0" />}
-              <div className="text-xs font-black uppercase leading-tight">{statusMessage.text}</div>
+            <div onClick={(e) => { e.stopPropagation(); setStatusMessage(null); }} className={`p-3 rounded-2xl flex items-start gap-3 shadow-lg border cursor-pointer animate-in zoom-in ${statusMessage.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' : statusMessage.type === 'warning' ? 'bg-amber-50 border-amber-100 text-amber-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'}`}>
+               <AlertCircle size={18} className="shrink-0 mt-0.5" />
+               <div className="flex-1">
+                 <div className="text-[10px] font-bold uppercase leading-tight tracking-wide">{statusMessage.text}</div>
+                 <div className="text-[7px] font-bold uppercase opacity-50 mt-1">Click to dismiss</div>
+               </div>
+               <X size={14} className="shrink-0 opacity-40" />
             </div>
           )}
-          
-          <div className="text-center space-y-3 px-4">
-            <h2 className="text-3xl font-black text-slate-900 tracking-tight">Ready to Train?</h2>
-            <p className="text-sm text-slate-500 leading-relaxed">Scan the session QR code at the studio to mark your attendance. <br/><strong>1 Credit will be deducted.</strong></p>
+
+          <div className="p-6 bg-indigo-600 rounded-3xl text-white flex flex-col items-center gap-4 shadow relative overflow-hidden">
+             <div className="text-center space-y-0.5">
+                <h2 className="text-lg font-bold italic tracking-tight">Check-in</h2>
+                <p className="text-[8px] font-semibold text-indigo-200 uppercase tracking-widest">Scan QR at Studio</p>
+             </div>
+             <div className="flex gap-4">
+               <button onClick={startScanner} className="w-12 h-12 bg-white text-indigo-600 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"><Camera size={20} /></button>
+               <button onClick={() => fileInputRef.current?.click()} className="w-12 h-12 bg-white/20 text-white rounded-xl flex items-center justify-center shadow-md active:scale-95 border border-white/20"><Upload size={20} /></button>
+               <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={(e) => {
+                 if (e.target.files?.length) {
+                   const scanner = new Html5Qrcode("reader");
+                   scanner.scanFile(e.target.files[0], true).then(processQrData).catch(() => setStatusMessage({ type: 'error', text: 'No QR found in image' }));
+                 }
+               }} />
+             </div>
           </div>
 
-          {!isScanning ? (
-            <div className="grid grid-cols-1 gap-4 px-4">
-              <button onClick={startScanner} className="group aspect-square bg-white border-4 border-indigo-50 rounded-[45px] flex flex-col items-center justify-center gap-6 active:scale-95 transition-all shadow-2xl hover:border-indigo-200">
-                <div className="w-24 h-24 bg-indigo-600 text-white rounded-[32px] flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform"><Camera size={48} /></div>
-                <span className="text-2xl font-black text-slate-800">Launch Scanner</span>
-              </button>
-              <button onClick={() => fileInputRef.current?.click()} className="w-full py-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-center gap-3 text-slate-600 font-black shadow-sm active:bg-slate-50"><ImageIcon size={20} /> Select from Photos</button>
-            </div>
-          ) : (
-            <div className="fixed inset-0 bg-black z-[100] flex flex-col">
-              <div className="p-6 flex justify-between items-center text-white shrink-0 bg-slate-900/90 backdrop-blur-md">
-                <div className="flex items-center gap-3">
-                   <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
-                   <h3 className="font-black text-lg">Align QR Code</h3>
-                </div>
-                <button onClick={stopScanner} className="p-3 bg-white/10 rounded-full active:scale-75 transition-transform"><X size={28} /></button>
-              </div>
-              <div className="flex-1 relative overflow-hidden flex items-center justify-center">
-                <div id="reader" className="w-full h-full bg-black"></div>
-                <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none flex items-center justify-center">
-                   <div className="w-64 h-64 border-2 border-indigo-500/50 rounded-3xl relative">
-                      <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-indigo-500 -mt-1 -ml-1 rounded-tl-lg"></div>
-                      <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-indigo-500 -mt-1 -mr-1 rounded-tr-lg"></div>
-                      <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-indigo-500 -mb-1 -ml-1 rounded-bl-lg"></div>
-                      <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-indigo-500 -mb-1 -mr-1 rounded-br-lg"></div>
-                      <div className="absolute top-1/2 left-0 right-0 h-1 bg-indigo-500/30 animate-[scan_2s_infinite]"></div>
-                   </div>
-                </div>
-              </div>
-            </div>
-          )}
+          <div className="space-y-3">
+             <h3 className="text-xs font-bold text-slate-800 px-1 flex items-center gap-2"><CheckCircle2 size={14} className="text-indigo-600"/> Current Bookings</h3>
+             <div className="space-y-2">
+                {currentBookings.map(item => {
+                  const cancellable = item.cls ? canCancel(item.cls.time, item.cls.date) : false;
+                  return (
+                    <div key={item.record.id} className="bg-white p-3 rounded-2xl border border-indigo-100 flex justify-between items-center shadow-sm">
+                       <div className="min-w-0">
+                          <div className="text-[11px] font-bold text-indigo-600 truncate">{item.cls?.name}</div>
+                          <div className="text-[8px] font-medium text-slate-400 uppercase">{item.cls?.time} • {item.cls?.location}</div>
+                          <div className={`text-[7px] font-bold uppercase mt-1 ${cancellable ? 'text-emerald-500' : 'text-amber-500'}`}>
+                            {cancellable ? 'Confirmed' : 'Locked (Starts Soon)'}
+                          </div>
+                       </div>
+                       <button onClick={(e) => { e.stopPropagation(); handleTraineeCancel(item.record.classId); }} className={`p-2 transition-all active:scale-90 ${cancellable ? 'text-slate-300 hover:text-red-500' : 'text-slate-200 cursor-not-allowed opacity-50'}`} disabled={!cancellable}>
+                         <Trash2 size={16} />
+                       </button>
+                    </div>
+                  );
+                })}
+                {availableToday.map(cls => (
+                  <div key={cls.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex justify-between items-center shadow-sm">
+                     <div className="min-w-0">
+                        <div className="text-[11px] font-semibold text-slate-800 truncate">{cls.name}</div>
+                        <div className="text-[8px] font-medium text-slate-400 uppercase">{cls.time} • {cls.location}</div>
+                     </div>
+                     <button onClick={(e) => { e.stopPropagation(); const res = onToggleAttendance(cls.id, user.id, 'SELF'); setStatusMessage({ type: res.success ? 'success' : 'error', text: res.message }); }} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase active:scale-95">Book</button>
+                  </div>
+                ))}
+                {availableToday.length === 0 && currentBookings.filter(b => b.cls?.date === todayStr).length === 0 && (
+                  <div className="text-center py-6 text-slate-300 text-[9px] font-bold uppercase border border-dashed rounded-2xl">No more sessions today</div>
+                )}
+             </div>
+          </div>
+
+          <div className="space-y-3">
+             <h3 className="text-xs font-bold text-slate-800 px-1 flex items-center gap-2"><CalendarDays size={14} className="text-indigo-600"/> Future Options</h3>
+             <div className="space-y-2">
+                {availableAdvance.map(cls => (
+                  <div key={cls.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex justify-between items-center shadow-sm">
+                     <div className="min-w-0">
+                        <div className="text-[11px] font-semibold text-slate-800 truncate">{cls.name}</div>
+                        <div className="text-[8px] font-medium text-slate-400 uppercase">{cls.date} • {cls.time}</div>
+                     </div>
+                     <button onClick={(e) => { e.stopPropagation(); const res = onToggleAttendance(cls.id, user.id, 'SELF'); setStatusMessage({ type: res.success ? 'success' : 'error', text: res.message }); }} className="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase active:scale-95">Book</button>
+                  </div>
+                ))}
+             </div>
+          </div>
         </div>
       )}
 
       {activeTab === 'history' && (
-        <div className="space-y-5 animate-in slide-in-from-right-4 duration-300 pb-12">
-          <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl border shadow-inner">
-            <button onClick={() => setHistorySubTab('attendance')} className={`flex-1 py-3 rounded-xl text-[11px] font-black uppercase tracking-widest ${historySubTab === 'attendance' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Session Log</button>
-            <button onClick={() => setHistorySubTab('purchases')} className={`flex-1 py-3 rounded-xl text-[11px] font-black uppercase tracking-widest ${historySubTab === 'purchases' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Transactions</button>
-          </div>
-          
-          <div className="space-y-3">
-            {historySubTab === 'attendance' ? (
-              traineeAttendance.length === 0 ? (
-                <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-200">
-                  <div className="w-16 h-16 bg-slate-50 text-slate-300 rounded-full flex items-center justify-center mx-auto mb-4"><Calendar size={32} /></div>
-                  <p className="text-slate-400 font-bold">No sessions attended yet.</p>
-                </div>
-              ) : (
-                traineeAttendance.map(record => {
-                  const cls = classes.find(c => c.id === record.classId);
-                  return (
-                    <div key={record.id} className="bg-white p-5 rounded-3xl border border-slate-100 flex justify-between items-center shadow-sm hover:border-indigo-100 transition-colors">
-                      <div className="space-y-1">
-                        <div className="text-sm font-black text-slate-800">{cls?.name || 'Archived Session'}</div>
-                        <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400">
-                           <Clock size={12} /> {new Date(record.timestamp).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+        <div className="space-y-4 animate-in slide-in-from-right-2 pb-24">
+           <div className="flex bg-white p-1 rounded-xl shadow-sm border border-slate-100">
+             <button onClick={() => setHistorySubTab('attendance')} className={`flex-1 py-1.5 rounded-lg text-[8px] font-bold uppercase ${historySubTab === 'attendance' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>Logbook</button>
+             <button onClick={() => setHistorySubTab('purchases')} className={`flex-1 py-1.5 rounded-lg text-[8px] font-bold uppercase ${historySubTab === 'purchases' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>Wallet</button>
+           </div>
+           
+           {historySubTab === 'attendance' ? (
+               traineeAttendance.length === 0 ? (
+                 <div className="text-center py-12 text-slate-300 text-[10px] font-bold uppercase">No session activity yet</div>
+               ) : (
+                 [...traineeAttendance].reverse().map(rec => {
+                   const cls = classes.find(c => c.id === rec.classId);
+                   const cancellable = cls ? canCancel(cls.time, cls.date) : false;
+                   return (
+                     <div key={rec.id} className="bg-white p-3 rounded-2xl border border-slate-50 shadow-sm flex justify-between items-center">
+                        <div className="min-w-0 flex-1 pr-2">
+                           <div className="text-[11px] font-semibold text-slate-800 truncate">{cls?.name || 'Session'}</div>
+                           <div className="text-[8px] font-medium text-slate-400 uppercase">{cls?.date || 'Past'} • {cls?.time || ''}</div>
+                           <div className={`text-[7px] font-bold uppercase mt-1 ${cancellable ? 'text-emerald-500' : 'text-slate-400'}`}>
+                             {cancellable ? 'Upcoming' : 'Locked/Completed'}
+                           </div>
                         </div>
-                      </div>
-                      <div className="text-[9px] bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-xl font-black uppercase tracking-tighter">{record.method} Verified</div>
-                    </div>
-                  );
-                })
-              )
-            ) : (
-              traineePayments.length === 0 ? (
-                <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-200">
-                  <div className="w-16 h-16 bg-slate-50 text-slate-300 rounded-full flex items-center justify-center mx-auto mb-4"><DollarSign size={32} /></div>
-                  <p className="text-slate-400 font-bold">No purchase history found.</p>
-                </div>
-              ) : (
-                traineePayments.map(p => (
-                  <div key={p.id} className="bg-white p-5 rounded-3xl border border-slate-100 flex justify-between items-center shadow-sm">
-                     <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center font-black"><DollarSign size={20} /></div>
-                        <div>
-                          <div className="text-sm font-black text-slate-800">+{p.credits} Credits</div>
-                          <div className="text-[10px] text-slate-400 font-bold">{new Date(p.timestamp).toLocaleDateString()}</div>
+                        <div className="flex items-center gap-2">
+                          <div className={`text-[7px] font-bold px-2 py-1 rounded-full uppercase ${rec.method === 'SELF' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>{rec.method === 'SELF' ? 'Self' : 'Staff'}</div>
+                          {cancellable && (
+                            <button onClick={(e) => { e.stopPropagation(); handleTraineeCancel(rec.classId); }} className="p-1.5 bg-red-50 text-red-500 rounded-lg active:scale-90"><Trash2 size={12} /></button>
+                          )}
                         </div>
                      </div>
-                     <div className="text-lg font-black text-slate-900">${p.amount}</div>
-                  </div>
-                ))
-              )
-            )}
-          </div>
+                   );
+                 })
+               )
+             ) : (
+               [...traineePayments].reverse().map(p => (
+                 <div key={p.id} className="bg-white p-3 rounded-2xl border border-slate-50 shadow-sm flex justify-between items-center">
+                    <div className="flex gap-3 items-center">
+                       <div className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center font-bold text-xs italic">S$</div>
+                       <div><div className="text-[11px] font-semibold text-slate-800">+{p.credits} Credits</div><div className="text-[8px] text-slate-400 font-medium uppercase">{new Date(p.timestamp).toLocaleDateString()}</div></div>
+                    </div>
+                    <div className="text-xs font-bold text-slate-900">S${p.amount}</div>
+                 </div>
+               ))
+             )}
         </div>
       )}
 
       {activeTab === 'shop' && (
-        <div className="space-y-6 pb-20 animate-in slide-in-from-right-4 duration-300">
-          <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 p-8 rounded-[40px] text-white shadow-2xl shadow-indigo-200 relative overflow-hidden">
-            <div className="absolute top-0 right-0 -mr-8 -mt-8 w-48 h-48 bg-white/10 rounded-full blur-3xl"></div>
-            <p className="text-indigo-100 text-[11px] font-black uppercase tracking-[0.2em] mb-2">Available Balance</p>
-            <div className="flex items-end gap-3">
-              <h2 className="text-6xl font-black">{user.credits || 0}</h2>
-              <span className="text-lg font-bold opacity-60 mb-2 uppercase">Credits</span>
-            </div>
+        <div className="space-y-4 animate-in slide-in-from-right-2 pb-24">
+          <div className="bg-indigo-600 p-6 rounded-3xl text-white shadow flex justify-between items-end">
+             <div><p className="text-[8px] font-bold uppercase opacity-60 tracking-widest mb-1">My Balance</p><h2 className="text-3xl font-bold">{user.credits || 0} Cr</h2></div>
+             <ShoppingBag size={32} className="opacity-30 mb-1" />
           </div>
-          
-          <div className="space-y-4">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Special Credit Packages</p>
-            <div className="grid grid-cols-1 gap-4">
-              {packages.map(pkg => (
-                <button 
-                  key={pkg.id} 
-                  onClick={() => setShowPaymentGateway(pkg)} 
-                  className="bg-white p-6 rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm active:scale-95 hover:border-indigo-400 transition-all text-left"
-                >
-                  <div className="space-y-1">
-                    <div className="text-lg font-black text-slate-800 tracking-tight">{pkg.name}</div>
-                    <div className="flex items-center gap-2">
-                       <span className="text-xs font-bold text-indigo-600">{pkg.credits} Credits</span>
-                       <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                       <span className="text-[10px] font-bold text-slate-400">${(pkg.price / pkg.credits).toFixed(2)} / credit</span>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end">
-                    <div className="text-2xl font-black text-slate-900">${pkg.price}</div>
-                    <span className="text-[9px] font-bold text-indigo-500 uppercase flex items-center gap-1">Secure Pay <ChevronRight size={10} /></span>
-                  </div>
-                </button>
-              ))}
-            </div>
+          <div className="grid grid-cols-1 gap-3">
+             {packages.map(pkg => (
+               <button key={pkg.id} onClick={() => setShowPaymentGateway(pkg)} className="bg-white p-4 rounded-2xl border border-slate-100 flex justify-between items-center shadow-sm active:scale-95 text-left transition-all">
+                  <div><div className="text-sm font-semibold text-slate-800 leading-tight">{pkg.name}</div><div className="text-[9px] font-medium text-indigo-600 uppercase tracking-wide">{pkg.credits} Training Credits</div></div>
+                  <div className="text-base font-bold text-slate-900">S${pkg.price}</div>
+               </button>
+             ))}
           </div>
         </div>
       )}
 
       {activeTab === 'profile' && (
-        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl space-y-8 animate-in slide-in-from-right-4 duration-300">
-          <div className="text-center space-y-3">
-             <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-[28px] flex items-center justify-center mx-auto shadow-inner border-2 border-indigo-100">
-               <UserIcon size={40} />
-             </div>
-             <div>
-               <h3 className="text-2xl font-black text-slate-900 tracking-tight">{user.name}</h3>
-               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Athlete Account</p>
-             </div>
-          </div>
-
-          <form onSubmit={handleProfileUpdate} className="space-y-5">
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Display Name</label>
-              <input required className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all font-bold text-slate-800" value={profileData.name} onChange={e => setProfileData(prev => ({ ...prev, name: e.target.value }))} />
-            </div>
-            
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email (Login ID)</label>
-              <input required type="email" className={`w-full px-5 py-4 bg-slate-50 border rounded-2xl outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all font-bold text-slate-800 ${emailChanged ? 'border-amber-200 ring-4 ring-amber-500/10' : 'border-slate-100'}`} value={profileData.email} onChange={e => setProfileData(prev => ({ ...prev, email: e.target.value }))} />
-              {emailChanged && (
-                <div className="p-3 bg-amber-50 rounded-xl flex items-center gap-2 text-[10px] font-black text-amber-600 uppercase">
-                  <AlertTriangle size={14} /> ID Change detected
+        <div className="bg-white p-6 rounded-3xl shadow-sm space-y-4 border border-slate-100 animate-in slide-in-from-right-2">
+           <div className="text-center">
+              <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mx-auto mb-2 shadow-inner"><UserIcon size={24} /></div>
+              <h3 className="text-base font-medium text-slate-800">{user.name}</h3>
+           </div>
+           <form onSubmit={(e) => { e.preventDefault(); onUpdateUser({...user, ...profileData, phoneNumber: profileData.phone}); alert("Profile Saved!"); }} className="space-y-3">
+              <div className="space-y-1"><label className="text-[8px] font-bold text-slate-400 uppercase tracking-widest ml-1">Name</label><input required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl outline-none text-xs font-medium" value={profileData.name} onChange={e => setProfileData({...profileData, name: e.target.value})} /></div>
+              <div className="space-y-1"><label className="text-[8px] font-bold text-slate-400 uppercase tracking-widest ml-1">Email ID</label><input required type="email" className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl outline-none text-xs font-medium" value={profileData.email} onChange={e => setProfileData({...profileData, email: e.target.value})} /></div>
+              <div className="space-y-1"><label className="text-[8px] font-bold text-slate-400 uppercase tracking-widest ml-1">Phone</label><input required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl outline-none text-xs font-medium" value={profileData.phone} onChange={e => setProfileData({...profileData, phone: e.target.value})} /></div>
+              <div className="space-y-1">
+                <label className="text-[8px] font-bold text-slate-400 uppercase tracking-widest ml-1">Password</label>
+                <div className="relative">
+                  <input required type={showPassword ? 'text' : 'password'} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl outline-none text-xs font-medium" value={profileData.password} onChange={e => setProfileData(p => ({ ...p, password: e.target.value }))} />
+                  <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300">{showPassword ? <EyeOff size={14}/> : <Eye size={14}/>}</button>
                 </div>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 tracking-wider">Secure Password</label>
-              <div className="relative">
-                <input required type="password" className="w-full pl-12 pr-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all font-bold" value={profileData.password} onChange={e => setProfileData(prev => ({ ...prev, password: e.target.value }))} />
-                <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
               </div>
-            </div>
-
-            <button type="submit" className="w-full py-5 bg-indigo-600 text-white font-black rounded-3xl shadow-2xl shadow-indigo-100 active:scale-95 transition-all mt-6 uppercase tracking-widest text-xs">Save Settings</button>
-          </form>
+              <button className="w-full py-3 bg-indigo-600 text-white font-bold rounded-2xl shadow active:scale-95 text-xs">Save Profile</button>
+           </form>
         </div>
       )}
 
-      {/* Simulated Secure Payment Gateway (Stripe Style) */}
+      {/* Payment Modal with Full Card Details */}
       {showPaymentGateway && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[200] flex items-end justify-center">
-          <div className="bg-white w-full max-w-md rounded-t-[50px] p-10 animate-in slide-in-from-bottom-full duration-500 shadow-2xl relative">
-            <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-8"></div>
-            
-            <div className="flex justify-between items-start mb-10">
-              <div>
-                <h3 className="text-3xl font-black text-slate-900 tracking-tight">Checkout</h3>
-                <p className="text-sm font-bold text-slate-400">{showPaymentGateway.name}</p>
-              </div>
-              <button onClick={() => setShowPaymentGateway(null)} className="p-3 bg-slate-100 rounded-2xl text-slate-400 hover:text-slate-600 active:scale-90 transition-all">
-                <X size={24} />
-              </button>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-end justify-center">
+          <div onClick={(e) => e.stopPropagation()} className="bg-white w-full max-w-[448px] rounded-t-3xl p-6 shadow-2xl animate-in slide-in-from-bottom-4">
+            <div className="flex justify-between items-start mb-6">
+              <div><h3 className="text-lg font-bold text-slate-800">Checkout</h3><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{showPaymentGateway.name}</p></div>
+              <button onClick={() => setShowPaymentGateway(null)} className="p-2 bg-slate-100 rounded-lg"><X size={16} /></button>
             </div>
-
             {isProcessing ? (
-              <div className="py-20 flex flex-col items-center justify-center gap-6">
-                 <Loader2 size={64} className="text-indigo-600 animate-spin" />
-                 <div className="text-center">
-                   <h4 className="text-xl font-black text-slate-800">Processing Payment...</h4>
-                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-2">Connecting to Secure Server</p>
-                 </div>
-              </div>
+              <div className="py-12 flex flex-col items-center gap-4 text-center"><Loader2 size={32} className="text-indigo-600 animate-spin" /><p className="font-bold text-slate-800 uppercase tracking-widest text-[9px]">Processing...</p></div>
             ) : (
-              <form onSubmit={handlePurchase} className="space-y-6">
-                <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100 mb-6">
-                   <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Price</span>
-                      <span className="text-3xl font-black text-indigo-600">${showPaymentGateway.price}.00</span>
-                   </div>
-                   <p className="text-[10px] font-black text-slate-400 uppercase">Adding {showPaymentGateway.credits} credits to your account</p>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Card Number</label>
+              <form onSubmit={handlePurchase} className="space-y-4">
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex justify-between items-center"><span className="text-[9px] font-bold uppercase text-slate-400">Total</span><span className="text-xl font-bold text-indigo-600">S${showPaymentGateway.price}</span></div>
+                <div className="space-y-3">
+                  <div className="relative">
+                    <CreditCard size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
+                    <input required placeholder="Card Number" className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-xl outline-none font-semibold text-xs focus:border-indigo-600" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
                     <div className="relative">
-                       <input required placeholder="0000 0000 0000 0000" className="w-full pl-12 pr-5 py-5 bg-white border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all font-mono font-bold tracking-widest" value={paymentForm.card} onChange={e => setPaymentForm({...paymentForm, card: e.target.value.replace(/\D/g, '').substring(0,16)})} />
-                       <CreditCard size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <Calendar size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
+                      <input required placeholder="MM/YY" className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-xl outline-none font-semibold text-xs focus:border-indigo-600 text-center" />
                     </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Expiry</label>
-                      <input required placeholder="MM/YY" className="w-full px-5 py-5 bg-white border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none font-bold text-center" value={paymentForm.expiry} onChange={e => setPaymentForm({...paymentForm, expiry: e.target.value.substring(0,5)})} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">CVV</label>
-                      <input required type="password" placeholder="***" className="w-full px-5 py-5 bg-white border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none font-bold text-center" value={paymentForm.cvv} onChange={e => setPaymentForm({...paymentForm, cvv: e.target.value.replace(/\D/g, '').substring(0,3)})} />
-                    </div>
+                    <input required placeholder="CVV" type="password" maxLength={3} className="w-full px-4 py-3 bg-white border border-slate-100 rounded-xl outline-none font-semibold text-xs focus:border-indigo-600 text-center" />
                   </div>
                 </div>
-
-                <div className="flex items-center gap-3 py-4 text-center">
-                   <ShieldCheck className="text-emerald-500 shrink-0" size={18} />
-                   <span className="text-[10px] font-black text-slate-400 uppercase">Encrypted & Secure Transaction via Stripe</span>
-                </div>
-
-                <button type="submit" className="w-full py-6 bg-indigo-600 text-white font-black rounded-[28px] shadow-2xl shadow-indigo-200 active:scale-[0.98] transition-all flex items-center justify-center gap-3">
-                  <DollarSign size={20} /> PAY NOW
-                </button>
+                <button type="submit" className="w-full py-4 bg-indigo-600 text-white font-black rounded-2xl shadow-lg text-xs active:scale-95 transition-all uppercase tracking-widest">Authorize Payment</button>
               </form>
             )}
           </div>
         </div>
       )}
 
-      {/* Purchase Success Feedback */}
       {showPurchaseSuccess && (
-        <div className="fixed inset-0 bg-indigo-600/95 backdrop-blur-xl z-[300] flex flex-col items-center justify-center p-10 animate-in fade-in duration-500">
-           <div className="w-32 h-32 bg-white text-indigo-600 rounded-[45px] flex items-center justify-center shadow-2xl mb-8 animate-bounce">
-             <CheckCircle2 size={64} strokeWidth={3} />
+        <div className="fixed inset-0 bg-indigo-600/90 backdrop-blur-md z-[300] flex flex-col items-center justify-center p-8 animate-in fade-in">
+           <div className="w-16 h-16 bg-white text-indigo-600 rounded-2xl flex items-center justify-center shadow-2xl mb-6 animate-bounce"><CheckCircle2 size={32} /></div>
+           <h3 className="text-xl font-bold text-white text-center mb-1">Top-up Successful!</h3>
+           <button onClick={() => setShowPurchaseSuccess(false)} className="mt-8 bg-white text-indigo-600 px-6 py-3 rounded-xl font-bold shadow-lg text-[10px] uppercase active:scale-95 transition-all">Great!</button>
+        </div>
+      )}
+
+      {isScanning && (
+        <div className="fixed inset-0 bg-black z-[100] flex flex-col animate-in fade-in">
+           <div className="p-4 flex justify-between items-center text-white shrink-0">
+             <h3 className="font-bold text-sm">Studio Scanner</h3>
+             <button onClick={stopScanner} className="p-2 bg-white/10 rounded-full"><X size={20} /></button>
            </div>
-           <div className="text-center space-y-3">
-             <h3 className="text-4xl font-black text-white tracking-tight">Payment Received!</h3>
-             <p className="text-indigo-100 font-bold uppercase tracking-widest text-sm">Your credits have been updated.</p>
-           </div>
-           <button onClick={() => setShowPurchaseSuccess(false)} className="mt-12 bg-white text-indigo-600 px-10 py-5 rounded-3xl font-black shadow-xl active:scale-90 transition-all uppercase tracking-widest text-xs">Awesome!</button>
+           <div id="reader" className="w-full flex-1" />
         </div>
       )}
     </div>

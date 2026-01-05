@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { User, UserRole, AuthState, AttendanceClass, AttendanceRecord, PaymentRecord, CreditPackage } from './types';
 import { MOCK_USERS, APP_STORAGE_KEY, CREDIT_PACKAGES as INITIAL_PACKAGES } from './constants';
@@ -58,7 +57,6 @@ const App: React.FC = () => {
   const handleLogin = (email: string, password?: string) => {
     const lowerEmail = email.toLowerCase();
     const foundUser = users.find(u => u.email.toLowerCase() === lowerEmail);
-    
     if (foundUser) {
       if (foundUser.password && password !== foundUser.password) {
         alert("Invalid password.");
@@ -70,16 +68,10 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
-    setAuth({ user: null, isAuthenticated: false });
-  };
+  const handleLogout = () => setAuth({ user: null, isAuthenticated: false });
 
   const handleResetPassword = (email: string, phone: string, newPassword: string): boolean => {
-    const userIndex = users.findIndex(u => 
-      u.email.toLowerCase() === email.toLowerCase() && 
-      u.phoneNumber === phone
-    );
-
+    const userIndex = users.findIndex(u => u.email.toLowerCase() === email.toLowerCase() && u.phoneNumber === phone);
     if (userIndex !== -1) {
       const updatedUsers = [...users];
       updatedUsers[userIndex] = { ...updatedUsers[userIndex], password: newPassword };
@@ -87,6 +79,15 @@ const App: React.FC = () => {
       return true;
     }
     return false;
+  };
+
+  const adjustCredits = (traineeId: string, delta: number) => {
+    const trainee = users.find(u => u.id === traineeId);
+    if (trainee && trainee.role === UserRole.TRAINEE) {
+      const updatedUser = { ...trainee, credits: Math.max(0, (trainee.credits || 0) + delta) };
+      setUsers(prev => prev.map(u => u.id === traineeId ? updatedUser : u));
+      if (auth.user?.id === traineeId) setAuth(prev => ({ ...prev, user: updatedUser }));
+    }
   };
 
   const addClass = (newClass: AttendanceClass) => {
@@ -98,162 +99,125 @@ const App: React.FC = () => {
   };
 
   const deleteClass = (id: string) => {
-    if (window.confirm("Are you sure you want to delete this session? Existing attendance records will be preserved for history, but the class will be removed from the active schedule.")) {
+    if (window.confirm("Permanently delete this session?")) {
       setClasses(prev => prev.filter(c => c.id !== id));
+      setAttendance(prev => prev.filter(a => a.classId !== id));
     }
   };
 
   const addUser = (newUser: User) => {
-    const userToSave = { ...newUser, password: newUser.password || 'password123' };
-    setUsers(prev => [...prev, userToSave]);
+    setUsers(prev => [...prev, newUser]);
   };
 
   const updateUser = (updatedUser: User) => {
     setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
-    if (auth.user?.id === updatedUser.id) {
-      setAuth(prev => ({ ...prev, user: updatedUser }));
+    if (auth.user?.id === updatedUser.id) setAuth(prev => ({ ...prev, user: updatedUser }));
+  };
+
+  const deleteUser = (id: string) => {
+    if (id === auth.user?.id) {
+      alert("You cannot delete your own account.");
+      return;
+    }
+    if (window.confirm("Permanently delete this user account?")) {
+      setUsers(prev => prev.filter(u => u.id !== id));
+      setAttendance(prev => prev.filter(a => a.traineeId !== id));
+      setPayments(prev => prev.filter(p => p.traineeId !== id));
     }
   };
 
-  const addAttendance = (record: AttendanceRecord) => {
-    const targetClass = classes.find(c => c.id === record.classId);
-    if (!targetClass) return { success: false, message: "Error: Class not found." };
+  const toggleAttendance = (classId: string, traineeId: string, method: 'STAFF' | 'SELF') => {
+    const existingRecord = attendance.find(a => a.classId === classId && a.traineeId === traineeId);
+    const targetClass = classes.find(c => c.id === classId);
+    const trainee = users.find(u => u.id === traineeId);
 
-    // Overlap Check: Trainee should not be allowed check in of another class of similar time
-    const hasOverlap = attendance.some(a => {
-      if (a.traineeId !== record.traineeId) return false;
-      const existingClass = classes.find(cl => cl.id === a.classId);
-      if (!existingClass) return false;
-      return existingClass.date === targetClass.date && existingClass.time === targetClass.time;
-    });
+    if (!targetClass || !trainee) return { success: false, message: "System error: Data missing." };
 
-    if (hasOverlap) {
-      return { 
-        success: false, 
-        message: `Attendance Conflict: You have already checked into another session scheduled for ${targetClass.time} today.` 
-      };
-    }
-
-    const now = new Date();
-    const classStartTime = new Date(`${targetClass.date}T${targetClass.time}`);
-    const GRACE_PERIOD_MS = 15 * 60 * 1000;
-    const earliestCheckIn = new Date(classStartTime.getTime() - GRACE_PERIOD_MS);
-
-    if (now < earliestCheckIn) {
-      return { 
-        success: false, 
-        message: `Check-in for this class hasn't opened yet. Please return at ${earliestCheckIn.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}.` 
-      };
-    }
-
-    const trainee = users.find(t => t.id === record.traineeId && t.role === UserRole.TRAINEE);
-    if (trainee) {
-      const currentCredits = trainee.credits ?? 0;
-      if (currentCredits <= 0) {
-        return { success: false, message: "Insufficient credits! Visit the Shop to top up." };
+    if (existingRecord) {
+      const updatedTrainee = { ...trainee, credits: (trainee.credits || 0) + 1 };
+      setUsers(prev => prev.map(u => u.id === trainee.id ? updatedTrainee : u));
+      if (auth.user?.id === trainee.id) setAuth(prev => ({ ...prev, user: updatedTrainee }));
+      setAttendance(prev => prev.filter(a => a.id !== existingRecord.id));
+      return { success: true, message: "Attendance removed. 1 Credit refunded." };
+    } else {
+      if ((trainee.credits ?? 0) <= 0) {
+        return { success: false, message: "Insufficient credits. Trainee must top up." };
       }
-      
-      const updatedTrainee = { ...trainee, credits: currentCredits - 1 };
-      setUsers(prev => prev.map(u => u.id === record.traineeId ? updatedTrainee : u));
-      
-      if (auth.user?.id === record.traineeId) {
-        setAuth(prev => ({ ...prev, user: updatedTrainee }));
-      }
+
+      const hasOverlap = attendance.some(a => {
+        if (a.traineeId !== traineeId) return false;
+        const existingClass = classes.find(cl => cl.id === a.classId);
+        return existingClass?.date === targetClass.date && existingClass?.time === targetClass.time;
+      });
+
+      if (hasOverlap) return { success: false, message: "Attendance Conflict: Overlap detected." };
+
+      const updatedTrainee = { ...trainee, credits: (trainee.credits || 0) - 1 };
+      setUsers(prev => prev.map(u => u.id === trainee.id ? updatedTrainee : u));
+      if (auth.user?.id === trainee.id) setAuth(prev => ({ ...prev, user: updatedTrainee }));
+
+      const record: AttendanceRecord = {
+        id: Math.random().toString(36).substr(2, 9),
+        classId,
+        traineeId,
+        timestamp: Date.now(),
+        method
+      };
+      setAttendance(prev => [record, ...prev]);
+      return { success: true, message: "Attendance marked. 1 Credit deducted." };
     }
-    
-    setAttendance(prev => [record, ...prev]);
-    return { success: true, message: "Attendance confirmed! 1 Credit has been deducted." };
   };
 
   const processPayment = (payment: PaymentRecord) => {
     setPayments(prev => [payment, ...prev]);
-    const trainee = users.find(t => t.id === payment.traineeId && t.role === UserRole.TRAINEE);
+    const trainee = users.find(t => t.id === payment.traineeId);
     if (trainee) {
       const updatedTrainee = { ...trainee, credits: (trainee.credits || 0) + payment.credits };
-      setUsers(prev => prev.map(u => u.id === payment.traineeId ? updatedTrainee : u));
-      if (auth.user?.id === payment.traineeId) {
-        setAuth(prev => ({ ...prev, user: updatedTrainee }));
-      }
+      setUsers(prev => prev.map(u => u.id === trainee.id ? updatedTrainee : u));
+      if (auth.user?.id === trainee.id) setAuth(prev => ({ ...prev, user: updatedTrainee }));
     }
   };
 
-  const updatePackages = (newPackages: CreditPackage[]) => {
-    setPackages(newPackages);
-  };
-
-  if (!auth.isAuthenticated || !auth.user) {
-    return <Auth onLogin={handleLogin} onResetPassword={handleResetPassword} />;
-  }
-
-  const trainees = users.filter(u => u.role === UserRole.TRAINEE);
+  if (!auth.isAuthenticated || !auth.user) return <Auth onLogin={handleLogin} onResetPassword={handleResetPassword} />;
 
   return (
-    <div className="min-h-screen flex flex-col max-w-md mx-auto bg-white shadow-xl relative overflow-hidden">
-      <header className="px-4 py-6 bg-indigo-600 text-white flex justify-between items-center shrink-0">
+    <div className="min-h-screen flex flex-col max-w-[448px] mx-auto bg-white shadow-xl relative overflow-hidden border-x border-slate-100">
+      <header className="px-3 py-4 bg-indigo-600 text-white flex justify-between items-center shrink-0 shadow-md">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-            <UserIcon size={20} />
-          </div>
+          <div className="w-7 h-7 bg-white/20 rounded flex items-center justify-center"><UserIcon size={16} /></div>
           <div>
-            <h1 className="font-bold text-lg leading-none italic">AttendEase</h1>
-            <p className="text-[10px] text-indigo-100 uppercase tracking-tighter font-bold">{auth.user?.role} PORTAL</p>
+            <h1 className="font-bold text-base italic tracking-tight leading-none">AttendEase</h1>
+            <p className="text-[8px] text-indigo-200 font-semibold uppercase">{auth.user?.role}</p>
           </div>
         </div>
-        <button onClick={handleLogout} className="p-2 hover:bg-white/10 rounded-full transition-colors active:scale-90"><LogOut size={20} /></button>
+        <button onClick={handleLogout} className="p-2 bg-white/10 hover:bg-white/20 rounded-full active:scale-95 transition-all"><LogOut size={16} /></button>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-4 pb-24 no-scrollbar">
+      <main className="flex-1 overflow-y-auto p-3 pb-24 no-scrollbar bg-slate-50/50">
         {auth.user?.role === UserRole.ADMIN && (
           <AdminView 
-            user={auth.user}
-            classes={classes} 
-            attendance={attendance} 
-            payments={payments}
-            users={users}
-            packages={packages}
-            onAddUser={addUser}
-            onUpdateUser={updateUser}
-            onAddClass={addClass}
-            onUpdateClass={updateClass}
-            onDeleteClass={deleteClass}
-            onAddAttendance={addAttendance}
-            onUpdatePackages={updatePackages}
+            user={auth.user} classes={classes} attendance={attendance} payments={payments} users={users} packages={packages}
+            onAddUser={addUser} onUpdateUser={updateUser} onDeleteUser={deleteUser} onAddClass={addClass} onUpdateClass={updateClass} onDeleteClass={deleteClass} onToggleAttendance={toggleAttendance} onUpdatePackages={setPackages} onAdjustCredits={adjustCredits}
           />
         )}
         {auth.user?.role === UserRole.TRAINER && (
           <TrainerView 
-            user={auth.user} 
-            classes={classes} 
-            attendance={attendance}
-            trainees={trainees}
-            onAddClass={addClass}
-            onUpdateClass={updateClass}
-            onDeleteClass={deleteClass}
-            onAddAttendance={addAttendance}
-            onUpdateUser={updateUser}
+            user={auth.user} classes={classes} attendance={attendance} trainees={users.filter(u => u.role === UserRole.TRAINEE)}
+            onAddClass={addClass} onUpdateClass={updateClass} onDeleteClass={deleteClass} onToggleAttendance={toggleAttendance} onUpdateUser={updateUser}
           />
         )}
         {auth.user?.role === UserRole.TRAINEE && (
           <TraineeView 
-            user={auth.user} 
-            classes={classes} 
-            attendance={attendance}
-            payments={payments}
-            packages={packages}
-            onCheckIn={addAttendance}
-            onPurchase={processPayment}
-            onUpdateUser={updateUser}
+            user={auth.user} classes={classes} attendance={attendance} payments={payments} packages={packages}
+            onToggleAttendance={toggleAttendance} onPurchase={processPayment} onUpdateUser={updateUser}
           />
         )}
       </main>
 
       {auth.user?.role === UserRole.TRAINEE && (
-        <div className="absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur border border-slate-200 p-3.5 rounded-2xl flex justify-between items-center shadow-2xl animate-in slide-in-from-bottom-8 duration-500">
-          <div className="flex flex-col">
-            <span className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Current Credits</span>
-            <span className="text-xl font-extrabold text-indigo-600">{auth.user.credits || 0}</span>
-          </div>
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-white shadow-sm ${ (auth.user.credits || 0) > 0 ? 'bg-emerald-500' : 'bg-red-500' }`}>
+        <div className="absolute bottom-4 left-4 right-4 bg-white border border-slate-200 p-3 rounded-2xl flex justify-between items-center shadow-lg animate-in slide-in-from-bottom-4">
+          <div><p className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">Balance</p><p className="text-xl font-bold text-indigo-600">{auth.user.credits || 0} <span className="text-[10px] text-slate-400 font-normal">Credits</span></p></div>
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white ${(auth.user.credits || 0) > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}>
              {(auth.user.credits || 0) > 0 ? '✓' : '!'}
           </div>
         </div>
