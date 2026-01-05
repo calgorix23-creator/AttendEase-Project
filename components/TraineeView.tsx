@@ -203,17 +203,19 @@ const TraineeView: React.FC<TraineeViewProps> = ({ user, classes, attendance, pa
                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={async (e) => {
                  if (e.target.files?.length) {
                    try {
-                     const scanner = new Html5Qrcode("reader");
-                     const decodedText = await scanner.scanFile(e.target.files[0], true);
+                     const fileScanner = new Html5Qrcode("file-reader");
+                     const decodedText = await fileScanner.scanFile(e.target.files[0], true);
                      await processQrData(decodedText);
                      e.target.value = '';
                    } catch (error) {
+                     console.error('QR scan error:', error);
                      setStatusMessage({ type: 'error', text: 'No QR code found in image' });
                      e.target.value = '';
                    }
                  }
                }} />
              </div>
+             <div id="file-reader" className="hidden"></div>
           </div>
 
           <div className="space-y-3">
