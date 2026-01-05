@@ -54,6 +54,8 @@ const TraineeView: React.FC<TraineeViewProps> = ({ user, classes, attendance, pa
     return diffInMins > 30;
   };
 
+  const [showCancelModal, setShowCancelModal] = useState<string | null>(null);
+
   const handleTraineeCancel = (classId: string) => {
     const cls = classes.find(c => c.id === classId);
     if (!cls) return;
@@ -63,14 +65,18 @@ const TraineeView: React.FC<TraineeViewProps> = ({ user, classes, attendance, pa
       return;
     }
 
-    if (window.confirm("Confirm cancellation? 1 Credit will be refunded.")) {
-      const res = onToggleAttendance(classId, user.id, 'SELF');
-      if (res.success) {
-        setStatusMessage({ type: 'success', text: "Booking cancelled. Credit refunded." });
-      } else {
-        setStatusMessage({ type: 'error', text: res.message });
-      }
+    setShowCancelModal(classId);
+  };
+
+  const confirmCancellation = () => {
+    if (!showCancelModal) return;
+    const res = onToggleAttendance(showCancelModal, user.id, 'SELF');
+    if (res.success) {
+      setStatusMessage({ type: 'success', text: "Booking cancelled. Credit refunded." });
+    } else {
+      setStatusMessage({ type: 'error', text: res.message });
     }
+    setShowCancelModal(null);
   };
 
   const handlePurchase = (e: React.FormEvent) => {
@@ -98,19 +104,21 @@ const TraineeView: React.FC<TraineeViewProps> = ({ user, classes, attendance, pa
       const data = JSON.parse(decodedText);
       if (data.cid) {
         const res = onToggleAttendance(data.cid, user.id, 'SELF');
+        await stopScanner();
         if (res.success) {
-          await stopScanner();
           setStatusMessage({ type: 'success', text: "Success! Enjoy your session." });
           setActiveTab('history');
           return true;
         } else {
           setStatusMessage({ type: 'error', text: res.message });
-          await stopScanner();
         }
+      } else {
+        await stopScanner();
+        setStatusMessage({ type: 'error', text: "Invalid QR code format." });
       }
     } catch (e) {
-      setStatusMessage({ type: 'error', text: "Invalid QR code format." });
       await stopScanner();
+      setStatusMessage({ type: 'error', text: "Invalid QR code format." });
     }
     return false;
   };
@@ -192,10 +200,17 @@ const TraineeView: React.FC<TraineeViewProps> = ({ user, classes, attendance, pa
              <div className="flex gap-4">
                <button onClick={startScanner} className="w-12 h-12 bg-white text-indigo-600 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"><Camera size={20} /></button>
                <button onClick={() => fileInputRef.current?.click()} className="w-12 h-12 bg-white/20 text-white rounded-xl flex items-center justify-center shadow-md active:scale-95 border border-white/20"><Upload size={20} /></button>
-               <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={(e) => {
+               <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={async (e) => {
                  if (e.target.files?.length) {
-                   const scanner = new Html5Qrcode("reader");
-                   scanner.scanFile(e.target.files[0], true).then(processQrData).catch(() => setStatusMessage({ type: 'error', text: 'No QR found in image' }));
+                   try {
+                     const scanner = new Html5Qrcode("reader");
+                     const decodedText = await scanner.scanFile(e.target.files[0], true);
+                     await processQrData(decodedText);
+                     e.target.value = '';
+                   } catch (error) {
+                     setStatusMessage({ type: 'error', text: 'No QR code found in image' });
+                     e.target.value = '';
+                   }
                  }
                }} />
              </div>
@@ -387,6 +402,27 @@ const TraineeView: React.FC<TraineeViewProps> = ({ user, classes, attendance, pa
              <button onClick={stopScanner} className="p-2 bg-white/10 rounded-full"><X size={20} /></button>
            </div>
            <div id="reader" className="w-full flex-1" />
+        </div>
+      )}
+
+      {/* Cancellation Confirmation Modal */}
+      {showCancelModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white w-full max-w-[340px] rounded-3xl p-6 shadow-2xl animate-in zoom-in">
+            <div className="text-center space-y-4">
+              <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mx-auto">
+                <AlertCircle size={24} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 mb-1">Confirm Cancellation</h3>
+                <p className="text-[11px] text-slate-500 font-medium leading-relaxed">1 Credit will be refunded to your account.</p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowCancelModal(null)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs active:scale-95 transition-all">Keep Booking</button>
+                <button onClick={confirmCancellation} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl text-xs active:scale-95 transition-all">Cancel Class</button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

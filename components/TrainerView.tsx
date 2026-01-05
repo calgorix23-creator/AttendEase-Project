@@ -141,7 +141,7 @@ const TrainerView: React.FC<TrainerViewProps> = ({ user, classes, attendance, tr
 
       {/* Manual Marker Modal */}
       {manualClass && (
-        <div className="fixed inset-0 bg-white z-[100] flex flex-col animate-in slide-in-from-bottom-2">
+        <div className="fixed inset-0 bg-white z-[200] flex flex-col animate-in slide-in-from-bottom-2 overflow-hidden">
           <div className="p-3 border-b flex justify-between items-center shrink-0">
              <div><h3 className="font-bold text-sm tracking-tight leading-tight">Manual Roster</h3><p className="text-[8px] text-indigo-600 font-bold uppercase">{manualClass.name}</p></div>
              <button onClick={() => { setManualClass(null); setManualFeedback(null); }} className="p-2 bg-slate-100 rounded-lg text-slate-400"><X size={16} /></button>
@@ -173,7 +173,7 @@ const TrainerView: React.FC<TrainerViewProps> = ({ user, classes, attendance, tr
 
       {/* QR Modal */}
       {qrClass && (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[100] flex flex-col items-center justify-center p-6 animate-in fade-in">
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex flex-col items-center justify-center p-6 animate-in fade-in overflow-hidden">
            <div className="text-center mb-6 space-y-1">
             <h3 className="text-lg font-bold text-white leading-tight">{qrClass.name}</h3>
             <p className="text-indigo-200 font-bold uppercase tracking-wider text-[8px]">{qrClass.date} • {qrClass.time}</p>
@@ -187,7 +187,7 @@ const TrainerView: React.FC<TrainerViewProps> = ({ user, classes, attendance, tr
 
       {/* Create/Edit Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4 overflow-hidden">
           <div className="bg-white w-full max-w-xs rounded-3xl p-5 shadow-2xl animate-in zoom-in">
             <div className="flex justify-between items-center mb-4"><h3 className="text-sm font-bold">{editingClass ? 'Edit' : 'New'} Session</h3><button onClick={() => setShowModal(false)} className="text-slate-300"><X size={20} /></button></div>
             <form onSubmit={handleClassSubmit} className="space-y-3">

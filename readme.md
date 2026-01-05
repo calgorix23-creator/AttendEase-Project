@@ -32,6 +32,13 @@ AttendEase is a high-fidelity, mobile-first Progressive Web App (PWA) for fitnes
 - **Staff Override**: Trainers and Admins can remove attendance at any time regardless of the 30-minute rule (for administrative corrections).
 
 ## 🛠️ Technical Implementation
-- **Mobile-First**: Optimized for 448px width.
+- **Mobile-First**: Optimized for 448px width with overflow prevention on modals.
 - **UI Compactness**: Low-padding layouts and optimized typography.
 - **Persistence**: All data is persisted in LocalStorage.
+- **QR Code Features**:
+  - **Camera Scanning**: Trainees can scan QR codes using their device camera for instant check-in.
+  - **Image Upload**: Trainees can upload QR code images from their gallery for verification.
+  - **Proper Error Handling**: Clear inline error messages when QR codes are invalid or not found.
+- **User Experience Enhancements**:
+  - **Inline Modals**: All confirmations (e.g., cancellations) use clean inline modals instead of browser alerts.
+  - **No Screen Overflow**: Fixed positioning and z-index management prevent UI overflow issues on mobile devices (tested on iPhone 13 Pro).
